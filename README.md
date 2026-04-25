@@ -1,6 +1,8 @@
 # Odoo Support Assistant
 
-A **Manifest V3** Chrome extension that adds an **AI brief** next to the Odoo chatter **Send message** button and opens a **draggable, tabbed panel** on the form. It reads the current record’s **description / pad**, **chatter** (optionally the full `mail.message` history via the same **JSON-RPC** your session already has), and optional form context, then calls **Google Gemini** with a structured schema to produce a **support triage brief** (summary, status strip, questions, evidence, timeline, and more when applicable).
+A **Manifest V3** Chrome extension that adds an **AI brief** next to the Odoo chatter **Send message** button and opens a **draggable, tabbed panel** on the form.
+
+**Repository:** [github.com/jonathanbertholet/odoo-support-assistant](https://github.com/jonathanbertholet/odoo-support-assistant) It reads the current record’s **description / pad**, **chatter** (optionally the full `mail.message` history via the same **JSON-RPC** your session already has), and optional form context, then calls **Google Gemini** with a structured schema to produce a **support triage brief** (summary, status strip, questions, evidence, timeline, and more when applicable).
 
 - **No separate backend** — you configure your own **Gemini API key** in the extension (or options page). Payloads are sent to **Google’s generative language API** from your browser when you run **Summarize**.
 

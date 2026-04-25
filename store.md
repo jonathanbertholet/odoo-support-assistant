@@ -24,7 +24,7 @@ Use the sections below in the [Chrome Web Store developer dashboard](https://chr
 
 **Where it works:** out of the box on **odoo.com**, **odoo.sh**, and **localhost / 127.0.0.1** development URLs. For **on‑prem or private hostnames**, open the extension’s **options** and use **“Grant & add site”** to approve a single origin (your `https://erp.example.com` style URL). Only origins you add are injected; you can remove them later.
 
-**Open source & license:** MIT. After you publish the GitHub repository, set the public clone URL in this paragraph and in the store’s “Homepage / Support” fields (for example an `odoo-support-assistant` public repo on your account).
+**Open source & license:** MIT. **Homepage / repository:** [github.com/jonathanbertholet/odoo-support-assistant](https://github.com/jonathanbertholet/odoo-support-assistant)
 
 **Privacy policy:** see `privacy.md` in the repository (link this URL in the store’s privacy policy field).
 

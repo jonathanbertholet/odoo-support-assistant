@@ -42,4 +42,4 @@ We may update this file in the repository when behavior changes. The store listi
 
 ## Contact
 
-For privacy questions about this open source project, open an issue in the public GitHub repository (see the repo linked from the store listing) or the contact method published there by the maintainers.
+For privacy questions about this open source project, open an issue in the [GitHub repository](https://github.com/jonathanbertholet/odoo-support-assistant) or the contact method published there by the maintainers.
