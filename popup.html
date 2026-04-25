@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Odoo Support Assistant</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        width: 680px;
+        max-height: 580px;
+        margin: 0;
+        padding: 12px 14px 16px;
+        font: 12px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #111827;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      h1 { font-size: 14px; margin: 0 0 10px; font-weight: 800; color: #0c4a6e; flex-shrink: 0; }
+      .kanban {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        flex: 1;
+        min-height: 0;
+        overflow-x: auto;
+        padding-bottom: 4px;
+      }
+      .kanban-col {
+        flex: 1 1 0;
+        min-width: 160px;
+        max-width: 280px;
+        display: flex;
+        flex-direction: column;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 6px 6px 8px;
+      }
+      .kanban-h {
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #64748b;
+        margin: 0 0 6px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 4px;
+      }
+      .kanban-h .ct { color: #94a3b8; font-weight: 700; }
+      .kanban-drop {
+        flex: 1;
+        min-height: 64px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        border-radius: 6px;
+        transition: background 0.12s;
+      }
+      .kanban-col.kanban-dragover,
+      details.kanban-col-done.kanban-dragover {
+        background: #e0f2fe;
+        outline: 1px dashed #0284c7;
+        outline-offset: 0;
+      }
+      /* Done column: narrow vertical tab when folded; full column when open. */
+      .kanban-col-done {
+        position: relative;
+        padding: 0;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        align-self: stretch;
+      }
+      .kanban-col-done:not([open]) {
+        flex: 0 0 40px;
+        max-width: 44px;
+        min-width: 36px;
+        border-radius: 10px;
+      }
+      .kanban-col-done[open] {
+        flex: 1 1 0;
+        min-width: 160px;
+        max-width: 280px;
+        border-radius: 10px;
+        padding: 6px 6px 8px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+      }
+      .kanban-done-summary {
+        list-style: none;
+        cursor: pointer;
+        user-select: none;
+        position: relative;
+        border-radius: 10px 10px 0 0;
+      }
+      .kanban-col-done:not([open]) .kanban-done-summary {
+        padding: 0;
+        height: 100%;
+        min-height: 120px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f1f5f9;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+      }
+      .kanban-col-done[open] .kanban-done-summary {
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #64748b;
+        padding: 0 0 6px;
+        display: block;
+        background: transparent;
+        border: 0;
+      }
+      .kanban-col-done[open] .kanban-done-summary::-webkit-details-marker { display: none; }
+      /* Closed: vertical “Done” with the count directly beneath it (not to the left). */
+      .kanban-col-done:not([open]) .kanban-done-htext { display: none; }
+      .kanban-col-done[open] .kanban-done-vlabel { display: none; }
+      .kanban-done-vlabel {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        writing-mode: horizontal-tb;
+        padding: 4px 2px 6px;
+      }
+      .kanban-done-vtext {
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: #64748b;
+        writing-mode: vertical-rl;
+        text-orientation: mixed;
+      }
+      .kanban-done-vcount {
+        font-size: 9px;
+        font-weight: 800;
+        color: #94a3b8;
+        line-height: 1;
+        writing-mode: horizontal-tb;
+        text-align: center;
+        min-width: 1.2em;
+      }
+      .kanban-done-htext {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+        padding: 0 2px 0 0;
+      }
+      .kanban-done-htext .ct { color: #94a3b8; font-weight: 700; }
+      .kanban-col-done[open] > .kanban-drop {
+        min-height: 48px;
+        padding: 0;
+        margin-top: 0;
+      }
+      .kanban-col-done:not([open]) .kanban-drop {
+        position: absolute;
+        width: 0;
+        height: 0;
+        overflow: hidden;
+        opacity: 0;
+        pointer-events: none;
+      }
+      .kanban-col-done[open] .kanban-drop {
+        position: static;
+        opacity: 1;
+        pointer-events: auto;
+      }
+      /* Re-enable drop on inner list when open; closed Done still receives drops on summary (details[data-col] parent). */
+      .kanban-card {
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 7px 8px 4px;
+        cursor: grab;
+        box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+      }
+      .kanban-card:active { cursor: grabbing; }
+      .kanban-task-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 4px; margin-bottom: 6px; }
+      .kanban-task-head { flex: 1; min-width: 0; }
+      .kanban-unstar-task {
+        flex-shrink: 0;
+        border: 0;
+        background: transparent;
+        cursor: pointer;
+        font-size: 12px;
+        line-height: 1;
+        padding: 2px 4px;
+        color: #94a3b8;
+        border-radius: 4px;
+      }
+      .kanban-unstar-task:hover { background: #f1f5f9; color: #0f172a; }
+      .kanban-prs-block { border-top: 1px solid #e2e8f0; margin: 0 -2px; padding: 6px 0 0; }
+      .kanban-task-title {
+        color: #0369a1;
+        font-size: 11px;
+        font-weight: 750;
+        word-break: break-word;
+        text-decoration: none;
+        line-height: 1.3;
+        display: block;
+      }
+      .kanban-task-title:hover { text-decoration: underline; }
+      .kanban-task-meta { font-size: 9px; color: #94a3b8; margin-top: 2px; }
+      .kanban-pr-line {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 4px;
+        padding: 3px 0 2px;
+        border-top: 1px solid #f1f5f9;
+        margin: 0 -2px 0 0;
+      }
+      .kanban-pr-line:first-of-type { border-top: 0; padding-top: 0; }
+      .kanban-pr-link {
+        color: #0c4a6e;
+        font-size: 11px;
+        font-weight: 650;
+        word-break: break-all;
+        text-decoration: none;
+        line-height: 1.3;
+        flex: 1;
+        min-width: 0;
+      }
+      .kanban-pr-link:hover { text-decoration: underline; }
+      .kanban-pr-unstar {
+        flex-shrink: 0;
+        border: 0;
+        background: transparent;
+        cursor: pointer;
+        font-size: 12px;
+        line-height: 1;
+        padding: 0 2px;
+        color: #94a3b8;
+        border-radius: 4px;
+      }
+      .kanban-pr-unstar:hover { background: #f1f5f9; color: #0f172a; }
+      .empty { color: #64748b; font-size: 12px; padding: 20px 8px; text-align: center; }
+      .empty-kanban { color: #94a3b8; font-size: 10px; text-align: center; padding: 8px 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>Odoo Support Assistant</h1>
+    <p style="margin: 0 0 10px; font-size: 11px; color: #64748b; font-weight: 600">Starred PRs by task</p>
+    <div id="root"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>
