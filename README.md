@@ -2,7 +2,9 @@
 
 A **Manifest V3** Chrome extension that adds an **AI brief** next to the Odoo chatter **Send message** button and opens a **draggable, tabbed panel** on the form.
 
-**Repository:** [github.com/jonathanbertholet/odoo-support-assistant](https://github.com/jonathanbertholet/odoo-support-assistant) It reads the current record’s **description / pad**, **chatter** (optionally the full `mail.message` history via the same **JSON-RPC** your session already has), and optional form context, then calls **Google Gemini** with a structured schema to produce a **support triage brief** (summary, status strip, questions, evidence, timeline, and more when applicable).
+**Repository:** [github.com/jonathanbertholet/odoo-support-assistant](https://github.com/jonathanbertholet/odoo-support-assistant).
+
+The extension reads the current record’s **description / pad**, **chatter** (optionally the full `mail.message` history via the same **JSON-RPC** your session already has), and optional form context, then calls **Google Gemini** with a structured schema to produce a **support triage brief** (summary, status strip, questions, evidence, timeline, and more when applicable).
 
 - **No separate backend** — you configure your own **Gemini API key** in the extension (or options page). Payloads are sent to **Google’s generative language API** from your browser when you run **Summarize**.
 
@@ -18,7 +20,7 @@ A **Manifest V3** Chrome extension that adds an **AI brief** next to the Odoo ch
 ## Install (development, unpacked)
 
 1. Clone this repository.
-2. Open `chrome://extensions` → **Developer mode** → **Load unpacked** → select the repository folder.
+2. Open `chrome://extensions` → **Developer mode** → **Load unpacked** → select the **`src`** directory (the extension root: it must contain `manifest.json`).
 3. Open the extension’s **options** (or the panel’s **Settings** → **Open extension options**).
 4. Enter your [Gemini API key](https://aistudio.google.com/apikey) and **Save** (stored in `chrome.storage.sync`).
 
@@ -33,13 +35,16 @@ For a **private Odoo URL** (e.g. `https://odoo.intranet.example`), add the origi
 
 ## Project layout
 
-| File | Role |
+| Path | Role |
 |------|------|
-| `manifest.json` | MV3: permissions, host patterns, `scripting` + optional origins for custom Odoo |
-| `contentScript.js` | In-page UI, extract/merge, panel, storage cache, inline launcher |
-| `background.js` | Gemini `generateContent` (JSON schema) + dynamic content script registration for custom origins |
-| `options.html` / `options.js` | API key, model, language, custom Odoo site list + permission flow |
-| `popup.html` / `popup.js` | Starred PRs by task, kanban |
+| **`src/`** | **Extension root** for Chrome (load unpacked on this folder) |
+| `src/manifest.json` | MV3: permissions, host patterns, icons, `scripting` + optional origins for custom Odoo |
+| `src/icons/` | Toolbar / store icon PNGs (`icon16` … `icon128`) |
+| `src/contentScript.js` | In-page UI, extract/merge, panel, storage cache, inline launcher |
+| `src/background.js` | Gemini `generateContent` (JSON schema) + dynamic content script registration for custom origins |
+| `src/options.html` / `options.js` | API key, model, language, custom Odoo site list + permission flow |
+| `src/popup.html` / `popup.js` | Starred PRs by task, kanban |
+| `README.md` | This file (repo root) |
 | `privacy.md` | Privacy policy for the store (link in listing) |
 | `store.md` | Draft **Chrome Web Store** text |
 | `LICENSE` | MIT |

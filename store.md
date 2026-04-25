@@ -36,7 +36,9 @@ Productivity
 
 “Odoo” is a trademark of Odoo S.A. This extension is an independent, community project and is not affiliated with or endorsed by Odoo S.A.
 
-Before you submit, add at least a **128×128** icon and wire `icons` + `action.default_icon` in `manifest.json` (the Web Store also wants promotional images; see the dashboard).
+## Icons (in-repo)
+
+The extension package under `src/` includes **`src/icons/`** (`icon16`–`icon128`) and `manifest.json` entries for `icons` and `action.default_icon`. The Web Store still asks for separate **promotional** / Marquee images in the dashboard.
 
 ## Screenshots (checklist)
 
