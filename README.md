@@ -15,7 +15,7 @@ The extension reads the current record’s **description / pad**, **chatter** (o
 - **Star** tasks to the **toolbar popup** (kanban by task) and star **PRs** in the brief banner; drag **panel** position (persisted)
 - **Local cache** of generated briefs (fingerprinted by chatter/pad **metadata**; up to **200** tickets) with **Regenerate** / **Refresh** when the extract is stale
 - **Self‑hosted / custom Odoo**: in **options**, use **“Grant & add site”** to approve a single origin; the same content script is registered for that host only
-- **Built‑in** matches: `*.odoo.com`, `*.odoo.sh`, `http://localhost:*`, `http://127.0.0.1:*`
+- **Built‑in** matches: `*.odoo.com`, `*.odoo.sh`, and `localhost` / `127.0.0.1` on common dev ports (80, 8069, 8080, 3000, 8000). Any other origin (e.g. another `localhost` port) → **options** → **Grant & add site** as for self‑hosted
 
 ## Install (development, unpacked)
 

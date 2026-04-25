@@ -81,7 +81,8 @@ const CUSTOM_CS_ID_PREFIX = "odcb-orig-";
 
 /**
  * Re-registers the content script on user-granted self-hosted / custom Odoo origins.
- * Built-in `*.odoo.com`, `*.odoo.sh`, and localhost are already covered by manifest `content_scripts`.
+ * Built-in `*.odoo.com`, `*.odoo.sh`, and common `localhost` / `127.0.0.1` ports (80, 8069, 8080, 3000, 8000) are in manifest.
+ * For any other self-hosted origin (e.g. `http://localhost:9999/`), the user adds it under Options and grants access so we register a content script.
  */
 async function syncCustomContentScripts() {
   const { odcbCustomOrigins = [] } = await chrome.storage.local.get("odcbCustomOrigins");

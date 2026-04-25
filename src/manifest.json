@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Odoo Support Assistant",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Build an AI brief from Odoo form chatter, pad, and mail messages. Star tasks and PRs, copy markdown, and save time on long tickets.",
   "icons": {
     "16": "icons/icon16.png",
@@ -15,8 +15,16 @@
     "https://generativelanguage.googleapis.com/*",
     "https://*.odoo.com/*",
     "https://*.odoo.sh/*",
-    "http://localhost:*/*",
-    "http://127.0.0.1:*/*"
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "http://localhost:8069/*",
+    "http://127.0.0.1:8069/*",
+    "http://localhost:8080/*",
+    "http://127.0.0.1:8080/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*",
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*"
   ],
   "content_scripts": [
     {
@@ -24,9 +32,15 @@
         "https://*.odoo.com/*",
         "https://*.odoo.sh/*",
         "http://localhost/*",
-        "http://localhost:*/*",
         "http://127.0.0.1/*",
-        "http://127.0.0.1:*/*"
+        "http://localhost:8069/*",
+        "http://127.0.0.1:8069/*",
+        "http://localhost:8080/*",
+        "http://127.0.0.1:8080/*",
+        "http://localhost:3000/*",
+        "http://127.0.0.1:3000/*",
+        "http://localhost:8000/*",
+        "http://127.0.0.1:8000/*"
       ],
       "js": ["contentScript.js"],
       "run_at": "document_idle"
