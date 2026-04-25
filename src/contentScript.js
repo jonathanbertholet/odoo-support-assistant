@@ -652,6 +652,39 @@
       .replace(/^<+/, "");
   }
 
+  /**
+   * One stable key per pull/MR: same PR repeated with `/files`, `?w=1`, or `http` vs `https` becomes one link.
+   * (Otherwise each regex match string differed and `Set` kept three rows for the same odoo#226256-style link.)
+   */
+  function canonicalizePrUrl(raw) {
+    const s0 = normalizePrUrl(String(raw).trim());
+    if (!s0) return "";
+    let u;
+    try {
+      u = new URL(s0);
+    } catch {
+      return s0;
+    }
+    if (u.hostname === "www.github.com") u.hostname = "github.com";
+    u.search = "";
+    u.hash = "";
+    const p = u.pathname;
+    // GitHub: /org/repo/pull/123(/files/…) → /org/repo/pull/123
+    const gh = p.match(/^(\/[^/]+\/[^/]+\/pull\/\d+)/i);
+    if (gh) u.pathname = gh[1];
+    else {
+      // GitLab: /group/…/project/-/merge_requests/42(/diffs …) → …/merge_requests/42
+      const mrm = p.match(/\/-\/merge_requests\/\d+/i);
+      if (mrm) u.pathname = p.slice(0, mrm.index + mrm[0].length);
+      else {
+        const bbp = p.match(/^(.*\/pull-requests\/\d+)/i);
+        if (bbp) u.pathname = bbp[1].replace(/\/+$/, "");
+      }
+    }
+    if (u.hostname === "github.com" || u.hostname.endsWith(".github.com")) u.protocol = "https:";
+    return u.href;
+  }
+
   // Short label for a PR URL (e.g. org/repo#42) to save horizontal space
   function shortPrLabel(url) {
     try {
@@ -673,17 +706,31 @@
 
   function extractPrLinksFromText(blob) {
     if (!blob) return [];
-    const found = new Set();
+    /** @type {Map<string, { url: string, label: string }>} */
+    const byKey = new Map();
     for (const re of PR_URL_REGEXES) {
       re.lastIndex = 0;
       let m = re.exec(blob);
       while (m) {
-        const u = normalizePrUrl(m[0]);
-        if (u) found.add(u);
+        const raw = normalizePrUrl(m[0]);
+        const c = raw ? canonicalizePrUrl(raw) : "";
+        if (c && !byKey.has(c)) byKey.set(c, { url: c, label: shortPrLabel(c) });
         m = re.exec(blob);
       }
     }
-    return [...found].map((url) => ({ url, label: shortPrLabel(url) }));
+    return [...byKey.values()];
+  }
+
+  /** Safety net if `ex.prLinks` was stored with duplicates or legacy shapes. */
+  function dedupePrLinkRows(/** @type {Array<{ url: string, label: string }>} */ rows) {
+    if (!Array.isArray(rows) || !rows.length) return [];
+    const m = new Map();
+    for (const row of rows) {
+      if (!row?.url) continue;
+      const c = canonicalizePrUrl(row.url) || row.url;
+      if (!m.has(c)) m.set(c, { url: c, label: shortPrLabel(c) || row.label || c });
+    }
+    return [...m.values()];
   }
 
   function extractPrLinksFromExtract(ex) {
@@ -704,8 +751,8 @@
   function getPrLinkRows() {
     const ex = state.lastExtract;
     if (!ex) return [];
-    if (ex.prLinks && ex.prLinks.length) return ex.prLinks;
-    return extractPrLinksFromExtract(ex);
+    const list = ex.prLinks && ex.prLinks.length ? ex.prLinks : extractPrLinksFromExtract(ex);
+    return dedupePrLinkRows(list);
   }
 
   // Loads which PR URLs are starred in chrome.storage.local for the current ticket key
@@ -723,7 +770,8 @@
       for (const r of odcbStarredPrs) {
         if (r.ticketKey === key) {
           if (isTaskStarRow(r)) taskS = true;
-          else if (r.prUrl) next.add(r.prUrl);
+          // Canonical URL so a star on …/pull/42/files matches the banner row for …/pull/42
+          else if (r.prUrl) next.add(canonicalizePrUrl(r.prUrl) || r.prUrl);
         }
       }
     } catch {
@@ -767,13 +815,16 @@
 
   async function togglePrStar(prUrl, prLabel) {
     const key = getTicketKey();
+    const canon = canonicalizePrUrl(prUrl) || prUrl;
     await ensurePrStarState();
     if (!(state.prStarredUrls instanceof Set)) state.prStarredUrls = new Set();
     let { odcbStarredPrs = [] } = await chrome.storage.local.get("odcbStarredPrs");
-    const idx = odcbStarredPrs.findIndex((r) => r.ticketKey === key && r.prUrl === prUrl);
+    const sameUrl = (/** @type {{ prUrl?: string }} */ r) =>
+      r.ticketKey === key && (canonicalizePrUrl(/** @type {string} */ (r.prUrl) || "") || r.prUrl) === canon;
+    const idx = odcbStarredPrs.findIndex(sameUrl);
     if (idx >= 0) {
       odcbStarredPrs.splice(idx, 1);
-      state.prStarredUrls.delete(prUrl);
+      state.prStarredUrls.delete(canon);
     } else {
       odcbStarredPrs.push({
         ticketKey: key,
@@ -781,11 +832,11 @@
         pageTitle: document.title,
         model: state.settings.model || "",
         resId: String(state.settings.resId || ""),
-        prUrl,
-        prLabel: prLabel || prUrl,
+        prUrl: canon,
+        prLabel: prLabel || shortPrLabel(canon) || canon,
         starredAt: new Date().toISOString()
       });
-      state.prStarredUrls.add(prUrl);
+      state.prStarredUrls.add(canon);
     }
     await chrome.storage.local.set({ odcbStarredPrs });
     await render();
