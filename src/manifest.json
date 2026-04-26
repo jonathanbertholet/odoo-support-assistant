@@ -59,5 +59,11 @@
       "32": "icons/icon32.png",
       "48": "icons/icon48.png"
     }
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["timeSavedCalculator.js", "cleaner.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

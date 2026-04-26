@@ -60,12 +60,46 @@
     <style>
       :host, * { box-sizing: border-box; }
       .odcb-panel {
-        position: fixed; top: 86px; right: 18px; left: auto; width: min(560px, calc(100vw - 40px)); height: min(760px, calc(100vh - 120px));
+        position: fixed; top: 86px; right: 18px; left: auto; width: min(560px, calc(100vw - 40px));
         z-index: 2147483647; background: #fff; color: #111827; border: 1px solid #d8dee4; border-radius: 16px;
         box-shadow: 0 24px 80px rgba(0,0,0,.28); overflow: hidden;
         font: 13px/1.42 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; display: none;
       }
-      .odcb-panel.open { display: flex; flex-direction: column; }
+      .odcb-panel.open {
+        display: flex;
+        flex-direction: column;
+        transition: min-height 0.5s cubic-bezier(0.4, 0, 0.2, 1), max-height 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      /* First paint / layout sync: no transition so the panel does not flash full height then contract to compact. */
+      .odcb-panel.open.odcb-panel-layout-init {
+        transition: none !important;
+      }
+      /* No brief yet: short panel, tight scroll area. With brief: same tall footprint as before (flex body fills). */
+      .odcb-panel.open.odcb-panel-compact {
+        min-height: 0;
+        max-height: min(520px, calc(100vh - 100px));
+        height: auto;
+      }
+      .odcb-panel.open:not(.odcb-panel-compact) {
+        min-height: min(760px, calc(100vh - 120px));
+        max-height: min(760px, calc(100vh - 120px));
+        height: auto;
+      }
+      .odcb-panel.open.odcb-panel-compact .odcb-body {
+        flex: 0 1 auto;
+        min-height: 0;
+        max-height: min(300px, 46vh);
+        overflow: auto;
+      }
+      .odcb-panel.open:not(.odcb-panel-compact) .odcb-body {
+        flex: 1;
+        min-height: 0;
+        max-height: none;
+        overflow: auto;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .odcb-panel.open { transition: none; }
+      }
       .odcb-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; background: #f8f5f7; border-bottom: 1px solid #eadfe7; }
       /* Draggable by grabbing the title column (not the action buttons on the right). */
       .odcb-header-lead { flex: 1; min-width: 0; cursor: grab; touch-action: none; }
@@ -111,6 +145,8 @@
       .odcb-primary { background: #714b67; color: white; border-color: #714b67; font-weight: 700; }
       .odcb-btn:disabled { opacity: .55; cursor: not-allowed; }
       .odcb-tabs { display: flex; border-bottom: 1px solid #e5e7eb; background: #fff; }
+      /* The hidden attribute alone loses to display:flex; this rule enforces the pre-brief nav hide. */
+      .odcb-tabs[hidden] { display: none !important; }
       .odcb-tab { flex: 1; padding: 9px 8px; border: 0; background: transparent; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 700; color: #4b5563; }
       .odcb-tab.active { color: #714b67; border-bottom-color: #714b67; background: #fdf9fb; }
       .odcb-body { overflow: auto; padding: 14px; flex: 1; }
@@ -124,6 +160,29 @@
       }
       .odcb-card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; margin-bottom: 10px; background: #fff; }
       .odcb-card h3 { margin: 0 0 7px; font-size: 13px; color: #111827; }
+      /* Pre-brief “At a glance” metric tiles */
+      .odcb-glance-title { margin: 0 0 12px; font-size: 13px; font-weight: 800; color: #111827; }
+      .odcb-glance-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+      @media (max-width: 440px) {
+        .odcb-glance-grid { grid-template-columns: 1fr; }
+      }
+      .odcb-glance-tile {
+        border: 1px solid #e8e0e4;
+        border-radius: 12px;
+        padding: 11px 8px 12px;
+        background: linear-gradient(165deg, #fdfbfd 0%, #fff 55%, #faf8fa 100%);
+        box-shadow: 0 1px 0 rgba(255,255,255,.9) inset;
+        text-align: center;
+        min-width: 0;
+      }
+      .odcb-glance-label {
+        font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: #6b7280; margin: 0 0 6px; line-height: 1.2;
+      }
+      .odcb-glance-value { font-size: 17px; font-weight: 800; color: #1e293b; line-height: 1.2; word-break: break-word; }
       .odcb-card p { margin: 0 0 8px; }
       .odcb-list { margin: 6px 0 0 18px; padding: 0; }
       .odcb-list li { margin: 5px 0; }
@@ -169,7 +228,7 @@
         </div>
       </div>
       <div class="odcb-progress" aria-hidden="true"><div class="odcb-progress-inner"></div></div>
-      <nav class="odcb-tabs">
+      <nav class="odcb-tabs" hidden aria-hidden="true">
         <button class="odcb-tab active" data-tab="summary">Summary</button>
         <button class="odcb-tab" data-tab="timeline">Timeline</button>
       </nav>
@@ -303,16 +362,34 @@
   }, 0);
 
   async function openPanel() {
-    panel.classList.add("open");
-    await applyStoredPanelPosition();
+    if (!hasTaskFormWithChatter()) return;
     autoDetectSettings();
     await loadApiSettings();
     if (!state.lastExtract) {
+      // Open compact + suppress height transition immediately (avoids full-size flash before compact).
+      panel.classList.add("odcb-panel-layout-init", "odcb-panel-compact", "open");
       await extract(false);
     } else {
       await tryLoadSummaryCache();
     }
+    if (!state.lastSummary && (state.activeTab === "timeline" || state.activeTab === "replicate")) {
+      state.activeTab = "summary";
+    }
+    if (!panel.classList.contains("open")) {
+      panel.classList.add("odcb-panel-layout-init");
+      syncPanelLayout();
+      panel.classList.add("open");
+    } else {
+      syncPanelLayout();
+    }
+    await applyStoredPanelPosition();
     await render();
+    // Drop layout suppress after first paint with final compact/expand state (avoids full→compact flash, keeps later transitions).
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        panel.classList.remove("odcb-panel-layout-init");
+      });
+    });
   }
 
   shadow.addEventListener("click", async (event) => {
@@ -396,6 +473,7 @@
    */
   async function syncRecordContext() {
     autoDetectSettings();
+    applyAIBriefShellVisibility();
     const fp = getRecordFingerprint();
     if (state.lastRecordFingerprint === null) {
       state.lastRecordFingerprint = fp;
@@ -423,10 +501,11 @@
     const existing = document.getElementById("odcb-inline-launcher");
     const sendButton = findSendMessageButton();
 
-    // No “Send message” in chatter = no inline button, and no floating fallback (old kanban / list views)
-    if (!sendButton) {
+    // Wrong URL (not a project/task record) or no form + chatter: no inline control and hide the extension shell.
+    if (!hasTaskFormWithChatter() || !sendButton) {
       document.getElementById("odcb-floating-fallback-launcher")?.remove();
       existing?.remove();
+      applyAIBriefShellVisibility();
       return;
     }
 
@@ -455,6 +534,7 @@
     if (button.parentElement !== sendButton.parentElement || sendButton.nextSibling !== button) {
       sendButton.insertAdjacentElement("afterend", button);
     }
+    applyAIBriefShellVisibility();
   }
 
   function findSendMessageButton() {
@@ -510,9 +590,14 @@
 
       // Pass-through if dynamic import fails (older browsers).
       let cleanDescriptionForModel = (/** @type {string | null | undefined} */ s) => (s == null || s === undefined ? "" : String(s));
+      /** Same dedupe as compact/API (`cleaner.getThreadMessageCountForDisplay`) for “Messages in thread” vs merged length. */
+      let getThreadMessageCountForDisplay = (/** @type {any[]} */ m) => (Array.isArray(m) ? m.length : 0);
       try {
         const mod = await getCleaner();
         cleanDescriptionForModel = mod.cleanDescriptionForModel;
+        if (typeof mod.getThreadMessageCountForDisplay === "function") {
+          getThreadMessageCountForDisplay = mod.getThreadMessageCountForDisplay;
+        }
       } catch {
         // keep pass-through
       }
@@ -540,6 +625,8 @@
       // Raw = what we collected from the API / DOM; merged = de-dupe + DOM junk filter (what the model and word count use).
       const mergedFromDom = messages.filter((m) => m.source === "dom").length;
       const mergedFromRpc = messages.filter((m) => typeof m.source === "string" && m.source.startsWith("rpc")).length;
+      /** Aligned with `cleaner` / Gemini: DOM often duplicates RPC rows with slightly different text + same meaning. */
+      const messagesDisplay = getThreadMessageCountForDisplay(messages);
       const payload = {
         url: location.href,
         title: document.title,
@@ -548,6 +635,8 @@
         stats: {
           /** Final thread size after merge (this is `messages.length`). */
           messages: messages.length,
+          /** Distinct rows after body+subject dedupe (same as compact payload) — use for “Messages in thread” in the panel. */
+          messagesDisplay,
           /** Rows from `mail.message` search_read (before merge with DOM). */
           rpcMessages: rpcMessages.length,
           /** Chatter message nodes we scanned in the DOM (before de-dupe / junk filter). */
@@ -981,6 +1070,40 @@
     return null;
   }
 
+  /**
+   * True on Odoo backend routes that correspond to a project task record view (odoo.com / odoo.sh style paths).
+   * Examples: /odoo/all-tasks/4807846, /odoo/project/49/tasks/6125052
+   * @returns {boolean}
+   */
+  function isProjectOrTaskRecordUrl() {
+    const p = location.pathname;
+    if (!/\/odoo\//i.test(p)) return false;
+    if (/\/odoo\/all-tasks\/\d+/i.test(p)) return true;
+    if (/\/odoo\/project\/[^/]+\/tasks\/\d+/i.test(p)) return true;
+    return false;
+  }
+
+  /**
+   * Only offer the brief UI on a project/task URL with a real form and loaded chatter (same bar as the inline button).
+   * @returns {boolean}
+   */
+  function hasTaskFormWithChatter() {
+    if (!isProjectOrTaskRecordUrl()) return false;
+    if (!document.querySelector(".o_form_view")) return false;
+    return !!findChatterRoot();
+  }
+
+  /**
+   * Hides the whole extension host (no draggable panel) when the page is not a task form with chatter; closes the panel if open.
+   */
+  function applyAIBriefShellVisibility() {
+    const show = hasTaskFormWithChatter();
+    root.style.display = show ? "" : "none";
+    if (!show && panel.classList.contains("open")) {
+      panel.classList.remove("open");
+    }
+  }
+
   function getVisibleFormRoot() {
     return document.querySelector(".o_form_view .o_form_sheet_bg") || document.querySelector(".o_form_view") || document.querySelector("main");
   }
@@ -1124,6 +1247,26 @@
   function mergeMessages(rpcMessages = [], domMessages = []) {
     const merged = [];
     const seen = new Set();
+    /** After `stripDomChatterNoise` + light UI junk strip — if DOM repeats this, skip (RPC already had it or earlier DOM). */
+    const contentSeen = new Set();
+
+    /**
+     * One fingerprint per *logical* chatter row. DOM copies often differ from RPC (author/date/“(edited)”) but
+     * `stripDomChatterNoise` + the trims below bring them in line; using only `id:` vs `t:` missed every RPC+DOM pair.
+     */
+    // Body-only: RPC has `subject` on the row; the same line is often only inside DOM `text`, so
+    // `body+subject` keys never matched and DOM+RPC were counted as two.
+    function contentKeyFor(message) {
+      const raw = cleanText(message?.text || message?.body || "");
+      let body = stripDomChatterNoise(message?.author, raw)
+        .replace(/\s*\(edited\)\s*$/i, "")
+        .replace(/^\s*task created\s*[\n\r]?\s*/i, "");
+      return (body || raw)
+        .replace(/\s+/g, " ")
+        .toLowerCase()
+        .trim()
+        .slice(0, 520);
+    }
 
     // Prefer stable message id from RPC; otherwise dedupe on normalized body (DOM often duplicates sub-nodes).
     function keyFor(message) {
@@ -1149,10 +1292,14 @@
       if (!text) return;
       // DOM: skip assignee/avatar/empty sub-fragments that only repeat name + date + (Assignees).
       if (message.source === "dom" && isJunkDomMessage(message.author, text)) return;
+      const ck = contentKeyFor({ ...message, text });
+      // RPC rows are canonical; later DOM with the same body (after layout strip) is a duplicate and inflates count.
+      if (message.source === "dom" && ck && contentSeen.has(ck)) return;
       const key = keyFor({ ...message, text });
       if (seen.has(key)) return;
       seen.add(key);
       merged.push({ ...message, index: merged.length + 1, text });
+      if (ck) contentSeen.add(ck);
     }
 
     // RPC is cleaner and usually complete. DOM is fallback/noise-capture.
@@ -1171,9 +1318,28 @@
   async function fetchRecord(model, resId) {
     const fields = await odooCall(model, "fields_get", [], { attributes: ["string", "type"] });
     const preferred = [
-      "display_name", "name", "description", "description_html", "partner_id", "customer_id", "user_id", "user_ids",
-      "stage_id", "priority", "kanban_state", "date_deadline", "tag_ids", "project_id", "company_id",
-      "sale_order_id", "sale_line_id", "subscription_id", "x_studio_subscription", "x_studio_subscription_state"
+      "display_name",
+      "name",
+      "create_date",
+      "write_date",
+      "description",
+      "description_html",
+      "partner_id",
+      "customer_id",
+      "user_id",
+      "user_ids",
+      "stage_id",
+      "priority",
+      "kanban_state",
+      "date_deadline",
+      "tag_ids",
+      "project_id",
+      "company_id",
+      "sale_order_id",
+      "sale_line_id",
+      "subscription_id",
+      "x_studio_subscription",
+      "x_studio_subscription_state"
     ].filter((f) => fields[f]);
     const result = await odooCall(model, "read", [[resId], preferred], {});
     const record = result?.[0] || {};
@@ -1288,9 +1454,44 @@
     }
   }
 
+  /**
+   * Summary / Timeline / Replicate / Stats stay hidden until a brief exists (`lastSummary`).
+   * Stats is inserted last (after Replicate) via `ensureStatsTabLast`. Settings stays in the header.
+   */
+  function syncTabNavVisibility() {
+    const nav = shadow.querySelector(".odcb-tabs");
+    if (!nav) return;
+    const has = !!state.lastSummary;
+    nav.hidden = !has;
+    nav.setAttribute("aria-hidden", has ? "false" : "true");
+    if (!has) {
+      nav.querySelector('button[data-tab="stats"]')?.remove();
+      if (state.activeTab === "timeline" || state.activeTab === "replicate" || state.activeTab === "stats") {
+        state.activeTab = "summary";
+      }
+    }
+  }
+
+  /** Stats is always the rightmost tab (after Replicate when that tab exists). */
+  function ensureStatsTabLast() {
+    const nav = shadow.querySelector(".odcb-tabs");
+    if (!nav || !state.lastSummary) return;
+    let btn = nav.querySelector('button[data-tab="stats"]');
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "odcb-tab";
+      btn.dataset.tab = "stats";
+      btn.textContent = "Stats";
+    }
+    nav.appendChild(btn);
+  }
+
   async function render() {
     await ensurePrStarState();
+    syncTabNavVisibility();
     syncReplicateTab();
+    ensureStatsTabLast();
     for (const tab of shadow.querySelectorAll(".odcb-tab")) {
       tab.classList.toggle("active", tab.dataset.tab === state.activeTab);
     }
@@ -1298,33 +1499,25 @@
     if (settingsBtn) settingsBtn.classList.toggle("odcb-active", state.activeTab === "settings");
     if (state.activeTab === "summary") await renderSummary();
     else if (state.activeTab === "timeline") renderTimelineTab();
+    else if (state.activeTab === "stats") renderStatsTab();
     else if (state.activeTab === "replicate") await renderReplicateTab();
     else await renderSettings();
     updatePrimaryCtaButton();
-    updateTimeSavedPill();
+    // Tall layout only after we have a brief; compact "Ready" avoids empty space; smooth grow when a summary first appears.
+    syncPanelLayout();
+    await updateTimeSavedPill();
+  }
+
+  /** Toggles compact height: no `lastSummary` (Ready / pre-brief) vs full `min(760px, …)` with flex body. */
+  function syncPanelLayout() {
+    panel.classList.toggle("odcb-panel-compact", !state.lastSummary);
   }
 
   async function renderSummary() {
     const prBanner = buildPrBannerHtml();
     const s = state.lastSummary;
     if (!s) {
-      const extract = state.lastExtract;
-      body.innerHTML = `${prBanner}
-        <div class="odcb-card">
-          <h3>Ready</h3>
-          <p>Click <strong>Summarize</strong> to create the brief.</p>
-          ${extract ? `<p class="odcb-small">${formatExtractStatsLine(extract.stats)}</p>` : ""}
-        </div>
-        <div class="odcb-card">
-          <h3>Detection</h3>
-          <div class="odcb-kv">
-            <strong>Model</strong><span>${escapeHtml(state.settings.model || "unknown")}</span>
-            <strong>Record ID</strong><span>${escapeHtml(state.settings.resId || "unknown")}</span>
-            <strong>URL</strong><span><a class="odcb-link" href="${escapeHtml(
-              location.href
-            )}" target="_blank" rel="noopener noreferrer">${escapeHtml(location.href)}</a></span>
-          </div>
-        </div>`;
+      body.innerHTML = buildReadyStateUserHtml(state.lastExtract);
       return;
     }
 
@@ -1387,6 +1580,155 @@
     `;
   }
 
+  /**
+   * Parses Odoo datetimes and message `date` fields (e.g. `2026-04-07 09:06:05` or ISO).
+   * @param {string | null | undefined} raw
+   * @returns {Date | null}
+   */
+  function parseOdooDatetime(/** @type {string | null | undefined} */ raw) {
+    if (raw == null || raw === false) return null;
+    const s = String(raw).trim();
+    if (!s) return null;
+    const t = s.includes("T") ? s : s.replace(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})/, "$1T$2");
+    const d = new Date(t);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  /** Calendar-day distance (UTC date parts) for stable “days ago” copy. */
+  function wholeDaysBetween(/** @type {Date} */ from, /** @type {Date} */ to) {
+    const a = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate());
+    const b = Date.UTC(to.getFullYear(), to.getMonth(), to.getDate());
+    return Math.max(0, Math.round((b - a) / 864e5));
+  }
+
+  /** @param {number | null} days */
+  function formatDaysAgoLabel(/** @type {number | null} */ days) {
+    if (days == null) return "—";
+    if (days === 0) return "today";
+    if (days === 1) return "1 day ago";
+    return `${days} days ago`;
+  }
+
+  function humanizeKanbanState(/** @type {string} */ s) {
+    const k = String(s || "").trim().toLowerCase();
+    if (k === "normal") return "In progress";
+    if (k === "done" || k === "ready" || k === "closed") return "Ready / done";
+    if (k === "blocked") return "Blocked";
+    return String(s || "").trim() || "—";
+  }
+
+  /**
+   * Metrics for the pre-brief “Ready” view: uses merged `messages`, RPC `create_date` / `write_date` when available,
+   * and the latest message kind for a human status hint.
+   * @param {any} ex
+   */
+  function computeTicketVitals(/** @type {any} */ ex) {
+    const v = {
+      messageCount: 0,
+      daysSinceCreate: null,
+      daysSinceLastChatter: null,
+      lastMessageKind: "",
+      stage: "",
+      kanbanLabel: ""
+    };
+    if (!ex) return v;
+    v.messageCount = ex.stats?.messagesDisplay ?? ex.stats?.messages ?? (Array.isArray(ex.messages) ? ex.messages.length : 0);
+    const now = new Date();
+    const rec = ex.rpc && !ex.rpc.error ? ex.rpc.record : null;
+    if (rec?.create_date) {
+      const c = parseOdooDatetime(String(rec.create_date));
+      if (c) v.daysSinceCreate = wholeDaysBetween(c, now);
+    }
+    let earliest = null;
+    let latest = null;
+    let latestMsg = null;
+    for (const m of ex.messages || []) {
+      const d = parseOdooDatetime(m?.date != null ? String(m.date) : "");
+      if (!d) continue;
+      if (!earliest || d < earliest) earliest = d;
+      if (!latest || d > latest) {
+        latest = d;
+        latestMsg = m;
+      }
+    }
+    if (latest) v.daysSinceLastChatter = wholeDaysBetween(latest, now);
+    if (v.daysSinceCreate == null && earliest) v.daysSinceCreate = wholeDaysBetween(earliest, now);
+    if (latestMsg) v.lastMessageKind = String(latestMsg.kind || "").trim() || String(latestMsg.message_type || "").trim() || "";
+    if (rec) {
+      if (rec.stage_id) v.stage = String(rec.stage_id);
+      if (rec.kanban_state) v.kanbanLabel = humanizeKanbanState(String(rec.kanban_state));
+    }
+    return v;
+  }
+
+  /**
+   * Pre-brief body: no merge/RPC jargon here — technical details live on the Stats tab after a brief exists.
+   * @param {any} extract
+   */
+  /**
+   * Three metric tiles for the pre-brief view; `vitals` may be from `computeTicketVitals` or placeholders.
+   * @param {any} vitals
+   * @param {{ footnote?: string } | null} [opts]
+   */
+  function buildAtAGlanceGridHtml(/** @type {any} */ vitals, /** @type {{ footnote?: string } | null} */ opts) {
+    const v = vitals || {};
+    const m = v.messageCount != null ? String(v.messageCount) : "—";
+    const a = v.daysSinceCreate != null ? formatDaysAgoLabel(v.daysSinceCreate) : "—";
+    const l = v.daysSinceLastChatter != null ? formatDaysAgoLabel(v.daysSinceLastChatter) : "—";
+    const foot = opts?.footnote
+      ? `<p class="odcb-small" style="margin:12px 0 0; text-align:center; color:#6b7280">${opts.footnote}</p>`
+      : "";
+    return `<div class="odcb-card" style="padding:14px 12px 16px; margin-bottom:10px">
+      <h3 class="odcb-glance-title">At a glance</h3>
+      <div class="odcb-glance-grid" role="list">
+        <div class="odcb-glance-tile" role="listitem">
+          <div class="odcb-glance-label">Messages in thread</div>
+          <div class="odcb-glance-value">${escapeHtml(m)}</div>
+        </div>
+        <div class="odcb-glance-tile" role="listitem">
+          <div class="odcb-glance-label">Ticket age</div>
+          <div class="odcb-glance-value">${escapeHtml(a)}</div>
+        </div>
+        <div class="odcb-glance-tile" role="listitem">
+          <div class="odcb-glance-label">Last activity</div>
+          <div class="odcb-glance-value">${escapeHtml(l)}</div>
+        </div>
+      </div>${foot}
+    </div>`;
+  }
+
+  function buildReadyStateUserHtml(/** @type {any} */ extract) {
+    const prBanner = buildPrBannerHtml();
+    if (!extract) {
+      return `${prBanner}
+      ${buildAtAGlanceGridHtml(
+        { messageCount: null, daysSinceCreate: null, daysSinceLastChatter: null },
+        { footnote: "Run <strong>Extract</strong> (↻) to load the thread, then <strong>Summarize</strong>." }
+      )}
+      <div class="odcb-card">
+        <h3>Record</h3>
+        <div class="odcb-kv">
+          <strong>URL</strong><span><a class="odcb-link" href="${escapeHtml(
+            location.href
+          )}" target="_blank" rel="noopener noreferrer">${escapeHtml(location.href)}</a></span>
+        </div>
+      </div>`;
+    }
+    const v = computeTicketVitals(extract);
+    return `${prBanner}
+      ${buildAtAGlanceGridHtml(v, null)}
+      <div class="odcb-card">
+        <h3>Record</h3>
+        <div class="odcb-kv">
+          <strong>Model</strong><span>${escapeHtml(state.settings.model || "unknown")}</span>
+          <strong>ID</strong><span>${escapeHtml(String(state.settings.resId || "—"))}</span>
+          <strong>Open</strong><span><a class="odcb-link" href="${escapeHtml(
+            extract.url || location.href
+          )}" target="_blank" rel="noopener noreferrer">View in Odoo</a></span>
+        </div>
+      </div>`;
+  }
+
   /** One-line copy for the Ready card; clarifies merged vs raw sources. */
   function formatExtractStatsLine(/** @type {any} */ st) {
     if (!st) return "";
@@ -1398,29 +1740,48 @@
     return `Merged thread: ${m} messages (${mfr} from RPC, ${mfd} from DOM after de-dupe & filters). Scanned: ${rpcR} RPC rows · ${domN} DOM nodes.`;
   }
 
-  /** HTML for the extracted payload (stats + JSON), shown inside Settings accordion. */
-  function rawExtractSectionHtml() {
-    const extract = state.lastExtract;
+  /** Merged/scan counts, detection, and RPC errors — also used by the Stats tab after a brief exists. */
+  function buildTechnicalStatsCardsHtml(/** @type {any} */ extract) {
     if (!extract) {
       return `<p class="odcb-empty" style="padding:8px 0">Nothing extracted yet.</p>`;
     }
     const st = extract.stats || {};
     return `
       <div class="odcb-card" style="margin-bottom:10px">
-        <h3>Stats</h3>
+        <h3>Extraction stats</h3>
+        <p class="odcb-richtext odcb-small" style="margin:0 0 8px">${escapeHtml(formatExtractStatsLine(st))}</p>
         <div class="odcb-kv">
-          <strong>Messages (merged)</strong><span>${escapeHtml(String(st.messages ?? ""))}</span>
+          <strong>Messages (merged)</strong><span>${escapeHtml(String(st.messages ?? "—"))}</span>
           <strong>From RPC in merge</strong><span>${escapeHtml(String(st.mergedFromRpc ?? "—"))}</span>
           <strong>From DOM in merge</strong><span>${escapeHtml(String(st.mergedFromDom ?? "—"))}</span>
-          <strong>RPC rows (API)</strong><span>${escapeHtml(String(st.rpcMessages ?? ""))}</span>
-          <strong>DOM nodes (scanned)</strong><span>${escapeHtml(String(st.domMessages ?? ""))}</span>
-          <strong>Model</strong><span class="odcb-richtext">${linkifyToSafeHtml(String(extract.detected.model || ""))}</span>
-          <strong>Record ID</strong><span class="odcb-richtext">${linkifyToSafeHtml(String(extract.detected.resId || ""))}</span>
+          <strong>RPC rows (API)</strong><span>${escapeHtml(String(st.rpcMessages ?? "—"))}</span>
+          <strong>DOM nodes (scanned)</strong><span>${escapeHtml(String(st.domMessages ?? "—"))}</span>
         </div>
         ${extract.rpc?.error ? `<p class="odcb-danger odcb-richtext">RPC failed: ${linkifyToSafeHtml(extract.rpc.error)}</p>` : ""}
       </div>
-      <textarea class="odcb-textarea" readonly>${escapeHtml(JSON.stringify(extract, null, 2))}</textarea>
-    `;
+      <div class="odcb-card" style="margin-bottom:10px">
+        <h3>Detection</h3>
+        <div class="odcb-kv">
+          <strong>Model</strong><span class="odcb-richtext">${linkifyToSafeHtml(String(extract.detected?.model || ""))}</span>
+          <strong>Record ID</strong><span class="odcb-richtext">${linkifyToSafeHtml(String(extract.detected?.resId ?? ""))}</span>
+          <strong>URL</strong><span><a class="odcb-link" href="${escapeHtml(
+            String(extract.url || location.href)
+          )}" target="_blank" rel="noopener noreferrer">${escapeHtml(String(extract.url || location.href))}</a></span>
+        </div>
+      </div>`;
+  }
+
+  /** HTML for the raw payload accordion in Settings. */
+  function rawExtractSectionHtml() {
+    const extract = state.lastExtract;
+    return `${buildTechnicalStatsCardsHtml(extract)}<textarea class="odcb-textarea" readonly>${escapeHtml(
+      extract ? JSON.stringify(extract, null, 2) : "{}"
+    )}</textarea>`;
+  }
+
+  /** Stats tab: same “At a glance” grid + record card as the pre-brief view (technical extract stays under Settings). */
+  function renderStatsTab() {
+    body.innerHTML = buildReadyStateUserHtml(state.lastExtract);
   }
 
   /**
@@ -1628,76 +1989,17 @@
     for (const item of items) lines.push(`- ${item}`);
   }
 
-  /**
-   * Median adult silent reading speed (English-like text) used for the footer estimate.
-   * Word counts use whitespace tokenization, which is closer to real reading time than chars/5.
-   */
-  const ODCB_READING_WPM = 220;
-
-  function countWords(/** @type {string} */ text) {
-    if (!text || typeof text !== "string") return 0;
-    const normalized = text.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
-    if (!normalized) return 0;
-    return normalized.split(" ").length;
-  }
-
-  function readingMinutesFromWordCount(/** @type {number} */ wordCount) {
-    if (wordCount <= 0) return 0;
-    return wordCount / ODCB_READING_WPM;
-  }
-
-  /**
-   * Text used for "reading time" for one message. DOM rows use the same layout strip as merge so we
-   * do not over-count name/date/assignee chrome on the long-read side of the time-saved pill.
-   */
-  function textForChatterWordCount(/** @type {any} */ m) {
-    const raw = String(m?.text ?? m?.body ?? m?.message ?? "");
-    if (m?.source === "dom" && m?.author) {
-      const s = stripDomChatterNoise(m.author, raw);
-      return s || raw;
+  /** Lazy ESM: `timeSavedCalculator.js` (imports `cleaner.js`) so the “long” side matches the real API data JSON. */
+  let timeSavedModulePromise = null;
+  function loadTimeSavedModule() {
+    if (!timeSavedModulePromise) {
+      timeSavedModulePromise = import(chrome.runtime.getURL("timeSavedCalculator.js"));
     }
-    return raw;
+    return timeSavedModulePromise;
   }
 
-  /**
-   * Chatter + description pad for the “long read” side of the estimate.
-   * Uses the **merged** `ex.messages` list (same as the model), not raw DOM node count.
-   * Only `message.text` / `body` are summed; DOM uses stripped body when possible (see `textForChatterWordCount`).
-   * Fallback to `rawChatterText` only when there is no merged thread (RPC off + no DOM messages).
-   */
-  function countChatterAndPadWords(/** @type {any} */ ex) {
-    if (!ex) return 0;
-    const list = ex.messages || [];
-    let w = 0;
-    for (const m of list) w += countWords(textForChatterWordCount(m));
-    if (w === 0 && ex.dom?.rawChatterText && !list.length) w = countWords(String(ex.dom.rawChatterText));
-    const desc = ex.dom?.descriptionText;
-    if (desc) w += countWords(String(desc));
-    return w;
-  }
-
-  /**
-   * Words in the same content as the Summary tab (excludes timeline / next steps / replicate — those are other tabs
-   * or not shown with the main brief, so the “saved time” is not under-counted on the right side.
-   */
-  function countSummaryPanelBriefWords(/** @type {any} */ s) {
-    if (!s) return 0;
-    const parts = [s.title, atAGlanceStatusLine(s), s.issue];
-    for (const x of s.important_facts || []) parts.push(x);
-    for (const x of s.conclusions || []) parts.push(x);
-    if (s.progress) {
-      if (s.progress.status) parts.push(s.progress.status);
-      for (const x of s.progress.completed || []) parts.push(x);
-      for (const x of s.progress.remaining || []) parts.push(x);
-    }
-    for (const x of s.questions_for_customer || []) parts.push(x);
-    for (const x of s.questions_for_internal_team || []) parts.push(x);
-    for (const e of s.evidence || []) parts.push(`${e?.source || ""} ${e?.quote_or_fact || ""}`.trim());
-    return countWords(parts.filter(Boolean).join("\n"));
-  }
-
-  // Compares “read the raw thread + pad” vs “read the on-screen brief” (words @ ODCB_READING_WPM).
-  function updateTimeSavedPill() {
+  /** Time-saved pill: long read = `buildAnonymizedCompactForApi` (same as “Sent to API”), short = Summary tab. */
+  async function updateTimeSavedPill() {
     const host = shadow.querySelector("[data-odcb-time-saved]");
     if (!host) return;
     if (!state.lastSummary || !state.lastExtract) {
@@ -1705,16 +2007,21 @@
       host.removeAttribute("title");
       return;
     }
-    const wThread = countChatterAndPadWords(state.lastExtract);
-    const wBrief = countSummaryPanelBriefWords(state.lastSummary);
-    const tThread = readingMinutesFromWordCount(wThread);
-    const tBrief = readingMinutesFromWordCount(wBrief);
-    const saved = Math.max(0, tThread - tBrief);
-    const pill = saved < 0.5 ? "<1 min saved" : `${Math.max(1, Math.round(saved))} min saved`;
-    const tip = `~${wThread.toLocaleString()} words in chatter+pad vs ~${wBrief.toLocaleString()} in the main brief; ~${(tThread * 60).toFixed(0)}s vs ~${(tBrief * 60).toFixed(0)}s at ${ODCB_READING_WPM} wpm.`;
-    host.removeAttribute("hidden");
-    host.innerHTML = `<span class="odcb-time-saved-pill">${escapeHtml(pill)}</span>`;
-    host.setAttribute("title", tip);
+    try {
+      const { getTimeSavedEstimate } = await loadTimeSavedModule();
+      const est = getTimeSavedEstimate(state.lastExtract, state.lastSummary);
+      if (!est) {
+        host.setAttribute("hidden", "");
+        host.removeAttribute("title");
+        return;
+      }
+      host.removeAttribute("hidden");
+      host.innerHTML = `<span class="odcb-time-saved-pill">${escapeHtml(est.pillLabel)}</span>`;
+      host.setAttribute("title", est.titleTooltip);
+    } catch {
+      host.setAttribute("hidden", "");
+      host.removeAttribute("title");
+    }
   }
 
   function setBusy(isBusy, message) {

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<!-- Static landing page for Odoo Support Assistant; deploy with: wrangler pages deploy website --project-name=odoo-support-assistant-site -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Odoo Support Assistant</title>
+  <meta name="description" content="Chrome extension: AI briefs from Odoo chatter, pad, and mail — star tasks, copy markdown, save time on long tickets." />
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --text: #e8eef4;
+      --muted: #8b9aab;
+      --accent: #714b67;
+      --accent-hover: #8f5f83;
+      --link: #7eb8da;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .wrap {
+      max-width: 40rem;
+      margin: 0 auto;
+      padding: 3rem 1.5rem 4rem;
+    }
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      margin: 0 0 0.5rem;
+    }
+    .tag {
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin: 0 0 2rem;
+    }
+    .card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 1.5rem 1.25rem;
+      margin-bottom: 1.5rem;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .card h2 {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin: 0 0 0.75rem;
+      font-weight: 600;
+    }
+    ul { margin: 0; padding-left: 1.2rem; }
+    li { margin-bottom: 0.35rem; }
+    a { color: var(--link); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .cta {
+      display: inline-block;
+      margin-top: 0.5rem;
+      padding: 0.65rem 1.1rem;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+    .cta:hover { background: var(--accent-hover); text-decoration: none; }
+    footer {
+      margin-top: 2.5rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Odoo Support Assistant</h1>
+    <p class="tag">Chrome extension (Manifest V3) — AI briefs next to Odoo chatter.</p>
+
+    <div class="card">
+      <h2>What it does</h2>
+      <p style="margin:0 0 1rem;">Reads the current record’s description, chatter, and optional form context, then produces a structured support triage brief (summary, questions, evidence, timeline, and more). Your Gemini API key stays in the extension — no separate backend required.</p>
+      <a class="cta" href="https://github.com/jonathanbertholet/odoo-support-assistant" rel="noopener noreferrer">View on GitHub</a>
+    </div>
+
+    <div class="card">
+      <h2>Highlights</h2>
+      <ul>
+        <li>Inline launcher when a chatter with <strong>Send message</strong> is present</li>
+        <li>Summary, timeline, settings, copy markdown, estimated time saved</li>
+        <li>Star tasks to the toolbar popup; star PRs in the brief</li>
+        <li>Local cache of briefs with regenerate when content changes</li>
+        <li>Built-in Odoo.com / Odoo.sh / common localhost dev ports; add custom origins in options</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Install (dev)</h2>
+      <p style="margin:0;">Clone the repo, open <code style="background:rgba(0,0,0,0.35);padding:0.15rem 0.4rem;border-radius:4px;">chrome://extensions</code>, enable Developer mode, <strong>Load unpacked</strong>, and select the folder that contains <code style="background:rgba(0,0,0,0.35);padding:0.15rem 0.4rem;border-radius:4px;">manifest.json</code>. Add your Gemini API key in extension options.</p>
+    </div>
+
+    <footer>
+      <p style="margin:0;">Independent open source tool — not affiliated with Odoo S.A. MIT license.</p>
+    </footer>
+  </div>
+</body>
+</html>
