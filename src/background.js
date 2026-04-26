@@ -1,4 +1,4 @@
-import { cleanDescriptionForModel } from "./cleaner.js";
+import { buildAnonymizedCompactForApi, getApiDataPreviewJson, restorePiiPlaceholders } from "./cleaner.js";
 
 const DEFAULT_MODEL = "gemini-3-flash-preview";
 
@@ -165,133 +165,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-/**
- * Shared placeholder prefix — model instructions require copying these tokens verbatim
- * in quotes so we can rehydrate PII in finalizeSummaryJson.
- */
-const PII_TOKEN_PREFIX = "ODCB_";
-
-/**
- * Mutable state: assigns stable «ODCB_…» tokens per (kind, original) for deduplication
- * and stores token → original for one-way rehydration after the API returns.
- */
-function createPiiTokenState() {
-  const tokenToOriginal = Object.create(null);
-  /** @type {Map<string, string>} */
-  const byKindValue = new Map();
-  const next = { E: 0, P: 0, A: 0, D: 0, I: 0 };
-  return {
-    /** @param {'E'|'P'|'A'|'D'|'I'} kind @param {string} original */
-    tokenFor(kind, original) {
-      const o = String(original);
-      const k = `${kind}\0${o}`;
-      if (byKindValue.has(k)) return byKindValue.get(k);
-      const n = ++next[kind];
-      const token = `«${PII_TOKEN_PREFIX}${kind}${n}»`;
-      byKindValue.set(k, token);
-      tokenToOriginal[token] = o;
-      return token;
-    },
-    /** Whole author / actor line: one token, same person → same line → same token. */
-    authorOrActor(/** @type {string} */ s) {
-      const t = String(s).trim();
-      if (!t) return s;
-      return this.tokenFor("A", t);
-    },
-    getTokenToOriginal() {
-      return tokenToOriginal;
-    }
-  };
-}
-
-// One pass each; order avoids nested confusion (emails do not look like E.164).
-const PII_EMAIL_RE = /[a-zA-Z0-9._%+\-][a-zA-Z0-9._%+\-]*@[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}/g;
-const PII_E164_RE = /\+[1-9]\d{6,14}\b/g;
-// Customer DB hostnames in descriptions (e.g. acme-corp.odoo.com); keep simple so we do not match odd paths.
-const PII_ODOO_HOST_RE = /\b[\w-]+\.odoo\.com\b/gi;
-// Obvious private IPv4; keeps internal host references out of the cloud request.
-const PII_PRIVATE_IP_RE =
-  /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/g;
-
-/**
- * Replaces inline emails, E.164 phones, *.odoo.com subdomains, and private IPs in one string.
- */
-function anonymizeInlineStrings(/** @type {string} */ s, /** @type {ReturnType<typeof createPiiTokenState>} */ state) {
-  if (!s || typeof s !== "string") return s;
-  let out = s.replace(PII_EMAIL_RE, (m) => state.tokenFor("E", m));
-  out = out.replace(PII_E164_RE, (m) => state.tokenFor("P", m));
-  out = out.replace(PII_ODOO_HOST_RE, (m) => state.tokenFor("D", m));
-  out = out.replace(PII_PRIVATE_IP_RE, (m) => state.tokenFor("I", m));
-  return out;
-}
-
-/**
- * Recurses the compact payload: message `author` and timeline `actor` are fully tokenized;
- * all other string values get inline PII tokenization.
- */
-function applyPiiTokenizationToTree(/** @type {any} */ root, state) {
-  const WHOLE = new Set(["author", "actor"]);
-  function walk(/** @type {any} */ v, /** @type {string | null} */ key) {
-    if (v === null || v === undefined) return;
-    if (typeof v === "string") {
-      return;
-    }
-    if (Array.isArray(v)) {
-      for (let i = 0; i < v.length; i++) walkChild(v, i, v[i]);
-    } else if (typeof v === "object") {
-      for (const k of Object.keys(v)) walkChild(v, k, v[k]);
-    }
-  }
-  function walkChild(/** @type {any} */ parent, /** @type {string | number} */ k, /** @type {any} */ val) {
-    if (val === null || val === undefined) return;
-    if (typeof val === "string") {
-      if (typeof k === "string" && WHOLE.has(k)) {
-        parent[k] = val.trim() ? state.authorOrActor(val) : val;
-      } else {
-        parent[k] = anonymizeInlineStrings(val, state);
-      }
-      return;
-    }
-    walk(val, typeof k === "string" ? k : null);
-  }
-  walk(root, null);
-}
-
-/**
- * Replaces «ODCB_*» tokens in any string in the generated JSON, longest-first, so ODCB_10
- * does not break before ODCB_1.
- */
-function restorePiiPlaceholders(/** @type {any} */ root, /** @type {Record<string, string> | null} */ tokenToOriginal) {
-  if (!tokenToOriginal) return;
-  const tokens = Object.keys(tokenToOriginal);
-  if (!tokens.length) return;
-  tokens.sort((a, b) => b.length - a.length);
-  function patch(s) {
-    if (typeof s !== "string" || !s) return s;
-    let out = s;
-    for (const t of tokens) {
-      if (out.includes(t)) out = out.split(t).join(tokenToOriginal[t]);
-    }
-    return out;
-  }
-  function rec(/** @type {any} */ v) {
-    if (v === null || v === undefined) return;
-    if (typeof v === "string") return; // not used at root
-    if (Array.isArray(v)) {
-      for (let i = 0; i < v.length; i++) {
-        if (typeof v[i] === "string") v[i] = patch(v[i]);
-        else rec(v[i]);
-      }
-    } else if (typeof v === "object") {
-      for (const k of Object.keys(v)) {
-        if (typeof v[k] === "string") v[k] = patch(v[k]);
-        else rec(v[k]);
-      }
-    }
-  }
-  rec(root);
-}
-
 /** Build the request body for generateContent (JSON schema). */
 function buildSummaryRequestBody(prompt) {
   return {
@@ -363,24 +236,6 @@ async function summarize(payload) {
 }
 
 /**
- * Same compacted + PII-tokenized object embedded in the user message after "Extracted data:" (not
- * the instruction block). Used for Summarize and for the Settings "Sent to API" debug pane.
- * @returns {{ compactPayload: object, tokenToOriginal: Record<string, string> }}
- */
-function buildAnonymizedCompactForApi(/** @type {any} */ payload) {
-  const compactPayload = compactForPrompt(payload);
-  const pii = createPiiTokenState();
-  applyPiiTokenizationToTree(compactPayload, pii);
-  return { compactPayload, tokenToOriginal: pii.getTokenToOriginal() };
-}
-
-/** Stringified JSON of `buildAnonymizedCompactForApi` (what the model reads as the task payload). */
-function getApiDataPreviewJson(/** @type {any} */ payload) {
-  const { compactPayload } = buildAnonymizedCompactForApi(payload);
-  return JSON.stringify(compactPayload, null, 2);
-}
-
-/**
  * @returns {{ prompt: string, tokenToOriginal: Record<string, string> }}
  */
 function buildPrompt(payload, language, tone) {
@@ -395,7 +250,7 @@ Goal: produce a clear operational brief for a support colleague who opens a long
 Rules:
 - Respond in ${language}.
 - Tone: ${tone}.
-- **Placeholder tokens (critical):** The JSON may include tokens like «ODCB_E1» (emails), «ODCB_P1» (phone numbers in E.164 form), «ODCB_A1» (message author/actor line), «ODCB_D1» (Odoo hostnames), «ODCB_I1» (private IPs). These stand in for real identifiers we redacted before sending. You **must** copy the exact same «…» token whenever you refer to the same fact, quote, or person in **important_facts**, **evidence** (source and quote_or_fact), **timeline** (actor, event if needed), and **next_steps** — do not type real email addresses, phone numbers, or personal names; keep the tokens so downstream tooling can restore them. Do not invent or substitute real PII.
+- **Placeholder tokens (critical):** The JSON may include tokens like «ODCB_E1» (emails), «ODCB_P1» (E.164 phones), «ODCB_A1» (chatter author, timeline actor, and Odoo 19+ partner / customer / user display names in rpc.record, e.g. partner_id), «ODCB_D1» (odoo.com hostnames), «ODCB_I1» (private IPs). These stand in for identifiers we redacted. You **must** copy the exact same «…» token when referring to the same fact or party in **important_facts**, **evidence**, **timeline**, and **next_steps** — do not re-type real PII. Do not invent identities.
 - Separate verified facts from interpretations.
 - Do not invent technical root causes.
 - When the customer is waiting, make that obvious.
@@ -410,84 +265,6 @@ Rules:
 Extracted data:
 ${JSON.stringify(compactPayload, null, 2)}`
   };
-}
-
-/**
- * Strips near-duplicate messages (same body, different DOM sub-node extractions) so the model
- * does not see the same paragraph five times. Key is normalized message text, not author/date.
- */
-function dedupeMessagesByText(messages) {
-  if (!Array.isArray(messages)) return [];
-  const seen = new Set();
-  const out = [];
-  for (const m of messages) {
-    const key = String(m.text || m.body || "")
-      .replace(/\s+/g, " ")
-      .toLowerCase()
-      .trim()
-      .slice(0, 520);
-    if (!key) continue;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(m);
-  }
-  return out;
-}
-
-function compactForPrompt(payload) {
-  const clone = JSON.parse(JSON.stringify(payload || {}));
-
-  if (Array.isArray(clone.messages)) {
-    const sliced = dedupeMessagesByText(clone.messages).slice(-200);
-    clone.messages = sliced.map((m, index) => {
-      const subj = (m.subject && String(m.subject).trim()) ? truncate(m.subject, 160) : "";
-      return {
-        index: m.index ?? index + 1,
-        source: m.source || "chatter",
-        id: m.id,
-        date: truncate(m.date, 60),
-        author: truncate(m.author, 80),
-        kind: truncate(m.kind, 60),
-        ...(subj ? { subject: subj } : {}),
-        text: truncate(m.text || m.body || "", 1000)
-      };
-    });
-  }
-
-  if (clone.dom) {
-    // Merged+deduped thread is in `messages`; the DOM copy is usually redundant and noisy.
-    delete clone.dom.messages;
-    clone.dom.formText = truncate(clone.dom.formText, 5000);
-    // See `cleaner.js`: drop glued Phone/Edition/Dbname/Version helpdesk preambles from the pad.
-    clone.dom.descriptionText = truncate(cleanDescriptionForModel(String(clone.dom.descriptionText || "")), 5000);
-    // Redundant with structured `messages` and often a huge source of DOM duplicates; omit to save context.
-    if (Array.isArray(clone.messages) && clone.messages.length > 0) {
-      delete clone.dom.rawChatterText;
-    } else {
-      clone.dom.rawChatterText = truncate(clone.dom.rawChatterText, 8000);
-    }
-    if (Array.isArray(clone.dom.metadata) && clone.dom.metadata.length > 40) {
-      clone.dom.metadata = clone.dom.metadata.slice(0, 40);
-    }
-  }
-
-  if (clone.rpc?.record) {
-    for (const key of Object.keys(clone.rpc.record)) {
-      if (typeof clone.rpc.record[key] === "string") {
-        let v = clone.rpc.record[key];
-        if (key === "description" || (v.includes("Phone:") && v.includes("Dbname:"))) v = cleanDescriptionForModel(v);
-        clone.rpc.record[key] = truncate(v, 3000);
-      }
-    }
-  }
-
-  return clone;
-}
-
-function truncate(value, max) {
-  if (!value) return value;
-  const s = String(value);
-  return s.length > max ? `${s.slice(0, max)}… [truncated ${s.length - max} chars]` : s;
 }
 
 function parseJson(text) {

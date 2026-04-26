@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Odoo Support Assistant",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Build an AI brief from Odoo form chatter, pad, and mail messages. Star tasks and PRs, copy markdown, and save time on long tickets.",
   "icons": {
     "16": "icons/icon16.png",
