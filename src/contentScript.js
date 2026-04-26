@@ -1043,6 +1043,52 @@
     return pairs;
   }
 
+  /**
+   * Removes author line(s), assignee/None glue, and Odoo date lines from DOM `innerText` so we
+   * can see whether a message has any real user content (or drop header-only / duplicate sub-nodes).
+   */
+  function stripDomChatterNoise(author, text) {
+    let t = cleanText(text || "");
+    const a = cleanText(author || "");
+    if (a) t = t.split(a).join(" ");
+    // "NoneJoseph X (y)(Assignees)"-style gluing without a line break
+    t = t.replace(/None([A-Z])/g, "$1");
+    t = t.split("\n");
+    t = t
+      .map((line) => line.trim())
+      .filter((line) => {
+        if (!line) return false;
+        if (/^\(Assignees\)$/i.test(line) || /^\(Assignee\)$/i.test(line)) return false;
+        if (/\(Assignees\)\s*$/i.test(line) && line.length < 80) return false;
+        if (/^None[^(]{0,120}\(Assignees\)/i.test(line)) return false;
+        // Odoo: "Mar 9, 11:03 AM" / "9 mars 2025" style single-line time headers
+        if (
+          /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b\s+\d{1,2},?\s*(?:\d{1,2}:\d{2}|\d{4})/i.test(line)
+        ) {
+          return false;
+        }
+        if (/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)(?:,|\s).{3,32}$/i.test(line)) return false;
+        if (/^[\d/:\s,APM-–]{4,32}$/i.test(line) && /[/:]/.test(line) && line.length < 40) return false;
+        return true;
+      });
+    t = t.join(" ").replace(/\bNone\b/gi, " ").replace(/\s+/g, " ").trim();
+    return t;
+  }
+
+  /**
+   * True when the DOM fragment has no user-written body: empty after layout strip, or only
+   * assignee/None UI glue. Keeps e.g. "ok" (strip has letters; no Assignees-only noise).
+   */
+  function isJunkDomMessage(author, text) {
+    const raw = cleanText(text);
+    const strip = stripDomChatterNoise(author, text);
+    if (strip.length >= 3) return false;
+    if (strip.length > 0 && /https?:/i.test(strip)) return false;
+    if (!strip.length) return true;
+    if (strip.length < 3 && /\(Assignees\)|\bNone[A-Za-z]/.test(raw + cleanText(author))) return true;
+    return false;
+  }
+
   function mergeMessages(rpcMessages = [], domMessages = []) {
     const merged = [];
     const seen = new Set();
@@ -1051,21 +1097,26 @@
     function keyFor(message) {
       const id = message?.id ? String(message.id) : "";
       if (id && /^\d+$/.test(id)) return `id:${id}`;
-      const text = cleanText(message?.text || message?.body || "")
+      const raw = cleanText(message?.text || message?.body || "");
+      const isDom = message?.source === "dom";
+      const forDedup = isDom ? stripDomChatterNoise(message?.author, raw) : raw;
+      const text = (forDedup || raw)
         .replace(/\s+/g, " ")
         .toLowerCase()
         .trim()
         .slice(0, 520);
       if (text) return `t:${text}`;
       const date = cleanText(message?.date || "").slice(0, 40).toLowerCase();
-      const author = cleanText(message?.author || "").slice(0, 80).toLowerCase();
-      return `legacy:${date}|${author}`;
+      const authorK = cleanText(message?.author || "").slice(0, 80).toLowerCase();
+      return `legacy:${date}|${authorK}`;
     }
 
     function add(message) {
       if (!message) return;
       const text = cleanText(message.text || message.body || "");
       if (!text) return;
+      // DOM: skip assignee/avatar/empty sub-fragments that only repeat name + date + (Assignees).
+      if (message.source === "dom" && isJunkDomMessage(message.author, text)) return;
       const key = keyFor({ ...message, text });
       if (seen.has(key)) return;
       seen.add(key);
