@@ -144,6 +144,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "ODCB_GET_API_DATA_PREVIEW") {
+    try {
+      const json = getApiDataPreviewJson(message.payload);
+      sendResponse({ ok: true, json });
+    } catch (error) {
+      sendResponse({ ok: false, error: cleanError(error) });
+    }
+    return true;
+  }
+
   if (message.type !== "ODCB_SUMMARIZE") return false;
 
   summarize(message.payload)
@@ -351,13 +361,28 @@ async function summarize(payload) {
 }
 
 /**
- * @returns {{ prompt: string, tokenToOriginal: Record<string, string> }}
+ * Same compacted + PII-tokenized object embedded in the user message after "Extracted data:" (not
+ * the instruction block). Used for Summarize and for the Settings "Sent to API" debug pane.
+ * @returns {{ compactPayload: object, tokenToOriginal: Record<string, string> }}
  */
-function buildPrompt(payload, language, tone) {
+function buildAnonymizedCompactForApi(/** @type {any} */ payload) {
   const compactPayload = compactForPrompt(payload);
   const pii = createPiiTokenState();
   applyPiiTokenizationToTree(compactPayload, pii);
-  const tokenToOriginal = pii.getTokenToOriginal();
+  return { compactPayload, tokenToOriginal: pii.getTokenToOriginal() };
+}
+
+/** Stringified JSON of `buildAnonymizedCompactForApi` (what the model reads as the task payload). */
+function getApiDataPreviewJson(/** @type {any} */ payload) {
+  const { compactPayload } = buildAnonymizedCompactForApi(payload);
+  return JSON.stringify(compactPayload, null, 2);
+}
+
+/**
+ * @returns {{ prompt: string, tokenToOriginal: Record<string, string> }}
+ */
+function buildPrompt(payload, language, tone) {
+  const { compactPayload, tokenToOriginal } = buildAnonymizedCompactForApi(payload);
 
   return {
     tokenToOriginal,

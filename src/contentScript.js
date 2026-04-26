@@ -1277,7 +1277,7 @@
     if (state.activeTab === "summary") await renderSummary();
     else if (state.activeTab === "timeline") renderTimelineTab();
     else if (state.activeTab === "replicate") await renderReplicateTab();
-    else renderSettings();
+    else await renderSettings();
     updatePrimaryCtaButton();
     updateTimeSavedPill();
   }
@@ -1401,8 +1401,26 @@
     `;
   }
 
-  function renderSettings() {
+  /**
+   * Settings tab: fetches the same anonymized JSON block the service worker embeds in the Gemini
+   * user turn (after the instructions), so you can diff it from “Raw extract”.
+   */
+  async function renderSettings() {
     const api = state.apiSettings;
+    let sentToApiSection = `<p class="odcb-small" style="margin:0 0 8px">Run <strong>Extract</strong> (toolbar ↻) to load the payload that will accompany the next <strong>Summarize</strong> request.</p>`;
+    if (state.lastExtract) {
+      try {
+        const r = await chrome.runtime.sendMessage({ type: "ODCB_GET_API_DATA_PREVIEW", payload: state.lastExtract });
+        if (r && r.ok && typeof r.json === "string") {
+          sentToApiSection = `<p class="odcb-small" style="margin:0 0 8px">This JSON is the <strong>Extracted data</strong> part of the user message to Gemini: compacted fields, truncated where noted in code, and <code>«ODCB_…»</code> PII tokens. The instruction / rules text above that block in the real request is not shown here.</p>
+        <textarea class="odcb-textarea" readonly aria-label="Data sent to API for analysis">${escapeHtml(r.json)}</textarea>`;
+        } else {
+          sentToApiSection = `<p class="odcb-danger odcb-richtext">${escapeHtml((r && r.error) || "Could not build API payload preview.")}</p>`;
+        }
+      } catch (e) {
+        sentToApiSection = `<p class="odcb-danger odcb-richtext">${escapeHtml(e?.message || String(e))}</p>`;
+      }
+    }
     body.innerHTML = `
       <div class="odcb-card">
         <h3>Gemini API settings</h3>
@@ -1447,11 +1465,16 @@
         <summary class="odcb-details-summary">Raw extract (debug)</summary>
         <div class="odcb-details-body">${rawExtractSectionHtml()}</div>
       </details>
+      <details class="odcb-details">
+        <summary class="odcb-details-summary">Sent to API (data only)</summary>
+        <div class="odcb-details-body">${sentToApiSection}</div>
+      </details>
       <div class="odcb-card">
         <h3>Debug checklist</h3>
         <ul class="odcb-list">
           <li>If the message count is low, set <code>model=project.task</code> plus the task ID from the URL.</li>
           <li>If RPC fails but DOM works, open Raw extract below and copy the error.</li>
+          <li>Compare <strong>Raw extract</strong> to <strong>Sent to API</strong> to see truncations, last-200-messages, and PII tokenization on the way to Gemini.</li>
           <li>If DOM extraction is noisy, send the CSS classes around one chatter message and the description pad.</li>
         </ul>
       </div>
