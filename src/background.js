@@ -1,3 +1,5 @@
+import { cleanDescriptionForModel } from "./cleaner.js";
+
 const DEFAULT_MODEL = "gemini-3-flash-preview";
 
 const SUMMARY_SCHEMA = {
@@ -456,7 +458,8 @@ function compactForPrompt(payload) {
     // Merged+deduped thread is in `messages`; the DOM copy is usually redundant and noisy.
     delete clone.dom.messages;
     clone.dom.formText = truncate(clone.dom.formText, 5000);
-    clone.dom.descriptionText = truncate(clone.dom.descriptionText, 5000);
+    // See `cleaner.js`: drop glued Phone/Edition/Dbname/Version helpdesk preambles from the pad.
+    clone.dom.descriptionText = truncate(cleanDescriptionForModel(String(clone.dom.descriptionText || "")), 5000);
     // Redundant with structured `messages` and often a huge source of DOM duplicates; omit to save context.
     if (Array.isArray(clone.messages) && clone.messages.length > 0) {
       delete clone.dom.rawChatterText;
@@ -470,7 +473,11 @@ function compactForPrompt(payload) {
 
   if (clone.rpc?.record) {
     for (const key of Object.keys(clone.rpc.record)) {
-      if (typeof clone.rpc.record[key] === "string") clone.rpc.record[key] = truncate(clone.rpc.record[key], 3000);
+      if (typeof clone.rpc.record[key] === "string") {
+        let v = clone.rpc.record[key];
+        if (key === "description" || (v.includes("Phone:") && v.includes("Dbname:"))) v = cleanDescriptionForModel(v);
+        clone.rpc.record[key] = truncate(v, 3000);
+      }
     }
   }
 

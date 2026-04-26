@@ -41,6 +41,15 @@
     lastRecordFingerprint: /** @type {string | null} */ (null)
   };
 
+  /** Lazy ESM import of `cleaner.js` (same file the service worker uses) for task pad / RPC description cleanup. */
+  let cleanerModPromise = null;
+  function getCleaner() {
+    if (!cleanerModPromise) {
+      cleanerModPromise = import(chrome.runtime.getURL("cleaner.js"));
+    }
+    return cleanerModPromise;
+  }
+
   const root = document.createElement("div");
   root.id = EXT_ID;
   root.style.all = "initial";
@@ -499,7 +508,17 @@
       await expandChatter(state.settings.maxLoadMoreClicks);
       autoDetectSettings();
 
+      // Pass-through if dynamic import fails (older browsers).
+      let cleanDescriptionForModel = (/** @type {string | null | undefined} */ s) => (s == null || s === undefined ? "" : String(s));
+      try {
+        const mod = await getCleaner();
+        cleanDescriptionForModel = mod.cleanDescriptionForModel;
+      } catch {
+        // keep pass-through
+      }
+
       const dom = extractDom();
+      dom.descriptionText = cleanDescriptionForModel(dom.descriptionText || "");
       let rpc = null;
       let rpcMessages = [];
       const model = state.settings.model;
@@ -509,6 +528,9 @@
         try {
           rpc = await extractRpc(model, resId);
           rpcMessages = rpc.messages || [];
+          if (rpc?.record && typeof rpc.record.description === "string") {
+            rpc.record.description = cleanDescriptionForModel(rpc.record.description);
+          }
         } catch (error) {
           rpc = { error: error.message, model, resId };
         }
