@@ -153,6 +153,133 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+/**
+ * Shared placeholder prefix — model instructions require copying these tokens verbatim
+ * in quotes so we can rehydrate PII in finalizeSummaryJson.
+ */
+const PII_TOKEN_PREFIX = "ODCB_";
+
+/**
+ * Mutable state: assigns stable «ODCB_…» tokens per (kind, original) for deduplication
+ * and stores token → original for one-way rehydration after the API returns.
+ */
+function createPiiTokenState() {
+  const tokenToOriginal = Object.create(null);
+  /** @type {Map<string, string>} */
+  const byKindValue = new Map();
+  const next = { E: 0, P: 0, A: 0, D: 0, I: 0 };
+  return {
+    /** @param {'E'|'P'|'A'|'D'|'I'} kind @param {string} original */
+    tokenFor(kind, original) {
+      const o = String(original);
+      const k = `${kind}\0${o}`;
+      if (byKindValue.has(k)) return byKindValue.get(k);
+      const n = ++next[kind];
+      const token = `«${PII_TOKEN_PREFIX}${kind}${n}»`;
+      byKindValue.set(k, token);
+      tokenToOriginal[token] = o;
+      return token;
+    },
+    /** Whole author / actor line: one token, same person → same line → same token. */
+    authorOrActor(/** @type {string} */ s) {
+      const t = String(s).trim();
+      if (!t) return s;
+      return this.tokenFor("A", t);
+    },
+    getTokenToOriginal() {
+      return tokenToOriginal;
+    }
+  };
+}
+
+// One pass each; order avoids nested confusion (emails do not look like E.164).
+const PII_EMAIL_RE = /[a-zA-Z0-9._%+\-][a-zA-Z0-9._%+\-]*@[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}/g;
+const PII_E164_RE = /\+[1-9]\d{6,14}\b/g;
+// Customer DB hostnames in descriptions (e.g. acme-corp.odoo.com); keep simple so we do not match odd paths.
+const PII_ODOO_HOST_RE = /\b[\w-]+\.odoo\.com\b/gi;
+// Obvious private IPv4; keeps internal host references out of the cloud request.
+const PII_PRIVATE_IP_RE =
+  /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/g;
+
+/**
+ * Replaces inline emails, E.164 phones, *.odoo.com subdomains, and private IPs in one string.
+ */
+function anonymizeInlineStrings(/** @type {string} */ s, /** @type {ReturnType<typeof createPiiTokenState>} */ state) {
+  if (!s || typeof s !== "string") return s;
+  let out = s.replace(PII_EMAIL_RE, (m) => state.tokenFor("E", m));
+  out = out.replace(PII_E164_RE, (m) => state.tokenFor("P", m));
+  out = out.replace(PII_ODOO_HOST_RE, (m) => state.tokenFor("D", m));
+  out = out.replace(PII_PRIVATE_IP_RE, (m) => state.tokenFor("I", m));
+  return out;
+}
+
+/**
+ * Recurses the compact payload: message `author` and timeline `actor` are fully tokenized;
+ * all other string values get inline PII tokenization.
+ */
+function applyPiiTokenizationToTree(/** @type {any} */ root, state) {
+  const WHOLE = new Set(["author", "actor"]);
+  function walk(/** @type {any} */ v, /** @type {string | null} */ key) {
+    if (v === null || v === undefined) return;
+    if (typeof v === "string") {
+      return;
+    }
+    if (Array.isArray(v)) {
+      for (let i = 0; i < v.length; i++) walkChild(v, i, v[i]);
+    } else if (typeof v === "object") {
+      for (const k of Object.keys(v)) walkChild(v, k, v[k]);
+    }
+  }
+  function walkChild(/** @type {any} */ parent, /** @type {string | number} */ k, /** @type {any} */ val) {
+    if (val === null || val === undefined) return;
+    if (typeof val === "string") {
+      if (typeof k === "string" && WHOLE.has(k)) {
+        parent[k] = val.trim() ? state.authorOrActor(val) : val;
+      } else {
+        parent[k] = anonymizeInlineStrings(val, state);
+      }
+      return;
+    }
+    walk(val, typeof k === "string" ? k : null);
+  }
+  walk(root, null);
+}
+
+/**
+ * Replaces «ODCB_*» tokens in any string in the generated JSON, longest-first, so ODCB_10
+ * does not break before ODCB_1.
+ */
+function restorePiiPlaceholders(/** @type {any} */ root, /** @type {Record<string, string> | null} */ tokenToOriginal) {
+  if (!tokenToOriginal) return;
+  const tokens = Object.keys(tokenToOriginal);
+  if (!tokens.length) return;
+  tokens.sort((a, b) => b.length - a.length);
+  function patch(s) {
+    if (typeof s !== "string" || !s) return s;
+    let out = s;
+    for (const t of tokens) {
+      if (out.includes(t)) out = out.split(t).join(tokenToOriginal[t]);
+    }
+    return out;
+  }
+  function rec(/** @type {any} */ v) {
+    if (v === null || v === undefined) return;
+    if (typeof v === "string") return; // not used at root
+    if (Array.isArray(v)) {
+      for (let i = 0; i < v.length; i++) {
+        if (typeof v[i] === "string") v[i] = patch(v[i]);
+        else rec(v[i]);
+      }
+    } else if (typeof v === "object") {
+      for (const k of Object.keys(v)) {
+        if (typeof v[k] === "string") v[k] = patch(v[k]);
+        else rec(v[k]);
+      }
+    }
+  }
+  rec(root);
+}
+
 /** Build the request body for generateContent (JSON schema). */
 function buildSummaryRequestBody(prompt) {
   return {
@@ -170,7 +297,11 @@ function buildSummaryRequestBody(prompt) {
   };
 }
 
-function finalizeSummaryJson(text, payload) {
+/**
+ * Inflates «ODCB_*» placeholders back to real author lines, phones, etc. after the model
+ * (hopefully) copied them into the structured JSON.
+ */
+function finalizeSummaryJson(/** @type {string} */ text, /** @type {Record<string, string> | null} */ tokenToOriginal) {
   const parsed = parseJson(text);
   // No generation timestamp; panel and markdown omit metadata blocks.
   // Optional in schema: normalize so the content script can render without assuming keys exist.
@@ -178,6 +309,7 @@ function finalizeSummaryJson(text, payload) {
   if (!Array.isArray(parsed.conclusions)) parsed.conclusions = [];
   // Optional field: normalize so the content script can treat missing as no steps.
   if (!Array.isArray(parsed.replicate_steps)) parsed.replicate_steps = [];
+  restorePiiPlaceholders(parsed, tokenToOriginal);
   return parsed;
 }
 
@@ -192,7 +324,7 @@ async function summarize(payload) {
     throw new Error("Gemini API key missing. Open the extension options and save your API key.");
   }
 
-  const prompt = buildPrompt(payload, language, tone);
+  const { prompt, tokenToOriginal } = buildPrompt(payload, language, tone);
   // Non-streaming: Google's Gemini API returns one full GenerateContentResponse from
   // `:generateContent`. Streaming is a separate method (`:streamGenerateContent` + `alt=sse`).
   // See: https://ai.google.dev/gemini-api/docs/text-generation ("By default, the model returns
@@ -215,22 +347,32 @@ async function summarize(payload) {
   const text = json?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") || "";
   if (!text.trim()) throw new Error("Gemini returned an empty response.");
 
-  return finalizeSummaryJson(text, payload);
+  return finalizeSummaryJson(text, tokenToOriginal);
 }
 
+/**
+ * @returns {{ prompt: string, tokenToOriginal: Record<string, string> }}
+ */
 function buildPrompt(payload, language, tone) {
   const compactPayload = compactForPrompt(payload);
-  return `You are an expert Odoo support analyst. Read the extracted Odoo task/form data, the pad/description, chatter, emails, log notes, status changes and logs.
+  const pii = createPiiTokenState();
+  applyPiiTokenizationToTree(compactPayload, pii);
+  const tokenToOriginal = pii.getTokenToOriginal();
+
+  return {
+    tokenToOriginal,
+    prompt: `You are an expert Odoo support analyst. Read the extracted Odoo task/form data, the pad/description, chatter, emails, log notes, status changes and logs.
 
 Goal: produce a clear operational brief for a support colleague who opens a long ticket and needs to understand it fast.
 
 Rules:
 - Respond in ${language}.
 - Tone: ${tone}.
+- **Placeholder tokens (critical):** The JSON may include tokens like «ODCB_E1» (emails), «ODCB_P1» (phone numbers in E.164 form), «ODCB_A1» (message author/actor line), «ODCB_D1» (Odoo hostnames), «ODCB_I1» (private IPs). These stand in for real identifiers we redacted before sending. You **must** copy the exact same «…» token whenever you refer to the same fact, quote, or person in **important_facts**, **evidence** (source and quote_or_fact), **timeline** (actor, event if needed), and **next_steps** — do not type real email addresses, phone numbers, or personal names; keep the tokens so downstream tooling can restore them. Do not invent or substitute real PII.
 - Separate verified facts from interpretations.
 - Do not invent technical root causes.
 - When the customer is waiting, make that obvious.
-- Preserve important dates, amounts, order references, database names, ticket IDs, URLs, app names, module names, model names, traceback fragments, payment provider references, and reproduction steps.
+- Where there is no «ODCB_…» token, preserve important dates, amounts, order references, database names, ticket IDs, URLs, app names, module names, model names, traceback fragments, payment provider references, and reproduction steps.
 - If evidence is weak or missing, say so in the evidence array (brief quotes only).
 - For next steps, assign a likely owner: Support, Customer, Developer, Platform, Functional, or Unknown.
 - at_a_glance: exactly one line for a quick support triage strip. Format: short state label, colon+space, then a very brief situation hint (no more than about 20 words). Examples: "Under investigation: reproducing on customer DB", "PRs awaiting merge: calendar invite template", "Fix deployed: 16.0 backport in staging". It must read like a status headline, not a full summary.
@@ -239,7 +381,8 @@ Rules:
 - important_facts vs conclusions: **important_facts** is required (always include the field) = verified, stance-neutral facts; use [] only if there are truly no discrete facts. **conclusions** is optional in meaning: short synthesis only when you add value; may be [] or omitted from overlap. **Never repeat the same or nearly the same point in both**—if a bullet would exist in both, keep it in one only (prefer important_facts for raw facts, conclusions for synthesis). If the thread is thin, put facts in important_facts and leave conclusions as []. It is better to return [] for conclusions than to pad or duplicate.
 
 Extracted data:
-${JSON.stringify(compactPayload, null, 2)}`;
+${JSON.stringify(compactPayload, null, 2)}`
+  };
 }
 
 /**
