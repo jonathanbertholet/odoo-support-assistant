@@ -515,15 +515,24 @@
       }
 
       const messages = mergeMessages(rpcMessages, dom.messages);
+      // Raw = what we collected from the API / DOM; merged = de-dupe + DOM junk filter (what the model and word count use).
+      const mergedFromDom = messages.filter((m) => m.source === "dom").length;
+      const mergedFromRpc = messages.filter((m) => typeof m.source === "string" && m.source.startsWith("rpc")).length;
       const payload = {
         url: location.href,
         title: document.title,
         detected: { model, resId: state.settings.resId || null },
         extracted_at: new Date().toISOString(),
         stats: {
+          /** Final thread size after merge (this is `messages.length`). */
           messages: messages.length,
-          domMessages: dom.messages.length,
+          /** Rows from `mail.message` search_read (before merge with DOM). */
           rpcMessages: rpcMessages.length,
+          /** Chatter message nodes we scanned in the DOM (before de-dupe / junk filter). */
+          domMessages: dom.messages.length,
+          /** Lines in the merged list that came from each source (after de-dupe; sum ≤ `messages` + by design). */
+          mergedFromDom,
+          mergedFromRpc,
           formChars: dom.formText.length,
           descriptionChars: dom.descriptionText.length
         },
@@ -567,9 +576,10 @@
     const st = state.lastExtract.stats || {};
     return JSON.stringify({
       k: getTicketKey(),
+      /** Merged list size (and merge breakdown) — invalidates cache when de-dupe / DOM filter changes. */
       m: st.messages,
-      dom: st.domMessages,
-      rpc: st.rpcMessages,
+      mfd: st.mergedFromDom,
+      mfr: st.mergedFromRpc,
       form: st.formChars,
       desc: st.descriptionChars
     });
@@ -1281,7 +1291,7 @@
         <div class="odcb-card">
           <h3>Ready</h3>
           <p>Click <strong>Summarize</strong> to create the brief.</p>
-          ${extract ? `<p class="odcb-small">Extracted ${escapeHtml(extract.stats.messages)} messages. RPC: ${escapeHtml(extract.stats.rpcMessages)} · DOM: ${escapeHtml(extract.stats.domMessages)}</p>` : ""}
+          ${extract ? `<p class="odcb-small">${formatExtractStatsLine(extract.stats)}</p>` : ""}
         </div>
         <div class="odcb-card">
           <h3>Detection</h3>
@@ -1355,19 +1365,33 @@
     `;
   }
 
+  /** One-line copy for the Ready card; clarifies merged vs raw sources. */
+  function formatExtractStatsLine(/** @type {any} */ st) {
+    if (!st) return "";
+    const m = st.messages ?? 0;
+    const rpcR = st.rpcMessages ?? 0;
+    const domN = st.domMessages ?? 0;
+    const mfr = st.mergedFromRpc ?? 0;
+    const mfd = st.mergedFromDom ?? 0;
+    return `Merged thread: ${m} messages (${mfr} from RPC, ${mfd} from DOM after de-dupe & filters). Scanned: ${rpcR} RPC rows · ${domN} DOM nodes.`;
+  }
+
   /** HTML for the extracted payload (stats + JSON), shown inside Settings accordion. */
   function rawExtractSectionHtml() {
     const extract = state.lastExtract;
     if (!extract) {
       return `<p class="odcb-empty" style="padding:8px 0">Nothing extracted yet.</p>`;
     }
+    const st = extract.stats || {};
     return `
       <div class="odcb-card" style="margin-bottom:10px">
         <h3>Stats</h3>
         <div class="odcb-kv">
-          <strong>Messages</strong><span>${escapeHtml(extract.stats.messages)}</span>
-          <strong>RPC messages</strong><span>${escapeHtml(extract.stats.rpcMessages)}</span>
-          <strong>DOM messages</strong><span>${escapeHtml(extract.stats.domMessages)}</span>
+          <strong>Messages (merged)</strong><span>${escapeHtml(String(st.messages ?? ""))}</span>
+          <strong>From RPC in merge</strong><span>${escapeHtml(String(st.mergedFromRpc ?? "—"))}</span>
+          <strong>From DOM in merge</strong><span>${escapeHtml(String(st.mergedFromDom ?? "—"))}</span>
+          <strong>RPC rows (API)</strong><span>${escapeHtml(String(st.rpcMessages ?? ""))}</span>
+          <strong>DOM nodes (scanned)</strong><span>${escapeHtml(String(st.domMessages ?? ""))}</span>
           <strong>Model</strong><span class="odcb-richtext">${linkifyToSafeHtml(String(extract.detected.model || ""))}</span>
           <strong>Record ID</strong><span class="odcb-richtext">${linkifyToSafeHtml(String(extract.detected.resId || ""))}</span>
         </div>
@@ -1578,20 +1602,30 @@
   }
 
   /**
+   * Text used for "reading time" for one message. DOM rows use the same layout strip as merge so we
+   * do not over-count name/date/assignee chrome on the long-read side of the time-saved pill.
+   */
+  function textForChatterWordCount(/** @type {any} */ m) {
+    const raw = String(m?.text ?? m?.body ?? m?.message ?? "");
+    if (m?.source === "dom" && m?.author) {
+      const s = stripDomChatterNoise(m.author, raw);
+      return s || raw;
+    }
+    return raw;
+  }
+
+  /**
    * Chatter + description pad for the “long read” side of the estimate.
-   * Only `message.text` / `body` / `message` are summed — we do not add separate word counts for id, index, date, author, etc.
-   * - RPC: `text` is body HTML as plain text (author/subject are not appended here).
-   * - DOM: `text` is the whole message node’s `innerText`, so author + time + body in the card are all included in that string.
-   * - Fallback: `rawChatterText` is the full chatter area (can include extra UI text).
+   * Uses the **merged** `ex.messages` list (same as the model), not raw DOM node count.
+   * Only `message.text` / `body` are summed; DOM uses stripped body when possible (see `textForChatterWordCount`).
+   * Fallback to `rawChatterText` only when there is no merged thread (RPC off + no DOM messages).
    */
   function countChatterAndPadWords(/** @type {any} */ ex) {
     if (!ex) return 0;
+    const list = ex.messages || [];
     let w = 0;
-    for (const m of ex.messages || []) {
-      const t = m?.text ?? m?.body ?? m?.message ?? "";
-      w += countWords(String(t));
-    }
-    if (w === 0 && ex.dom?.rawChatterText) w = countWords(String(ex.dom.rawChatterText));
+    for (const m of list) w += countWords(textForChatterWordCount(m));
+    if (w === 0 && ex.dom?.rawChatterText && !list.length) w = countWords(String(ex.dom.rawChatterText));
     const desc = ex.dom?.descriptionText;
     if (desc) w += countWords(String(desc));
     return w;
